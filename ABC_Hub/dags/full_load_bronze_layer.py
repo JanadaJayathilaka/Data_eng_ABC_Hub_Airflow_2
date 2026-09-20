@@ -79,7 +79,7 @@ with DAG(
         python_callable=load_bronze_table,
         op_kwargs={
             "sql_file": "full_load/country.sql",
-            "target_table": "bronze_country",
+            "target_table": "bronze.country",
         },
     )
 
