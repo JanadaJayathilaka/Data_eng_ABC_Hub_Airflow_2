@@ -2,11 +2,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
-
-
 
 from airflow import DAG
 from airflow.operators.empty import EmptyOperator
@@ -14,7 +11,6 @@ from airflow.operators.python import PythonOperator
 
 from utils.database import extract_data, truncate_table, load_data
 from utils.file import read_sql
-
 
 # --------------------------------------------------------------------
 # Configuration
@@ -25,13 +21,55 @@ TARGET_CONN = "postgres_dw"
 
 SQL_DIR = BASE_DIR / "sql" / "bronze"
 
+# List of all tables configured for full load into bronze layer
+FULL_LOAD_TABLES = [
+    # Lookup / Reference Tables
+    "country",
+    "city",
+    "content_type",
+    "genre",
+    "artist",
+    "device",
+    "payment_method",
+    "support_category",
+    "courier",
+    "warehouse",
+    "subscription_plan",
+
+    # Customer
+    "customer",
+    "customer_address",
+    "customer_subscription",
+
+    # Content
+    "content",
+    "content_genre",
+    "content_artist",
+
+    # Streaming
+    "streaming_session",
+
+    # Physical Inventory & Rentals
+    "inventory_item",
+    "rental",
+    "delivery",
+
+    # Payments
+    "payment",
+
+    # Engagement
+    "review",
+    "wishlist",
+    "support_ticket",
+    "recommendation",
+]
+
 
 # --------------------------------------------------------------------
 # Generic Bronze Full Loader
 # --------------------------------------------------------------------
 
 def load_bronze_table(sql_file: str, target_table: str):
-
     sql = read_sql(SQL_DIR / sql_file)
 
     columns, rows = extract_data(
@@ -71,21 +109,24 @@ with DAG(
 ) as dag:
 
     start = EmptyOperator(
-        task_id="start" 
-    )
-
-    load_bronze_country = PythonOperator(
-        task_id="load_bronze_country",
-        python_callable=load_bronze_table,
-        op_kwargs={
-            "sql_file": "full_load/country.sql",
-            "target_table": "bronze.country",
-        },
+        task_id="start"
     )
 
     end = EmptyOperator(
         task_id="end"
     )
 
-    start >> [load_bronze_country] >> end
+    # Dynamically generate a PythonOperator for each full-load table
+    load_tasks = [
+        PythonOperator(
+            task_id=f"load_bronze_{table}",
+            python_callable=load_bronze_table,
+            op_kwargs={
+                "sql_file": f"full_load/{table}.sql",
+                "target_table": f"bronze.{table}",
+            },
+        )
+        for table in FULL_LOAD_TABLES
+    ]
 
+    start >> load_tasks >> end
