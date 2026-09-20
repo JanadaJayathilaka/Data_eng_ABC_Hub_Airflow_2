@@ -102,7 +102,7 @@ with DAG(
     dag_id="full_load_bronze_layer",
     description="Full load into bronze layer",
     start_date=datetime(2026, 1, 1),
-    schedule="@daily",
+    schedule=None,
     catchup=False,
     default_args=default_args,
     tags=["ABC", "full load bronze"],
