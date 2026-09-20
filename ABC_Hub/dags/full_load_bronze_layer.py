@@ -9,17 +9,24 @@ from airflow import DAG
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.python import PythonOperator
 
+try:
+    from airflow.datasets import Dataset
+except ImportError:
+    from airflow.sdk.definitions.asset import Asset as Dataset
+
 from utils.database import extract_data, truncate_table, load_data
 from utils.file import read_sql
 
 # --------------------------------------------------------------------
-# Configuration
+# Configuration & Datasets
 # --------------------------------------------------------------------
-
 SOURCE_CONN = "postgres_raw"
 TARGET_CONN = "postgres_dw"
 
 SQL_DIR = BASE_DIR / "sql" / "bronze"
+
+# Dataset emitted when full bronze load completes
+bronze_full_load_dataset = Dataset("postgres_dw://bronze/full_load")
 
 # List of all tables configured for full load into bronze layer
 FULL_LOAD_TABLES = [
@@ -68,7 +75,6 @@ FULL_LOAD_TABLES = [
 # --------------------------------------------------------------------
 # Generic Bronze Full Loader
 # --------------------------------------------------------------------
-
 def load_bronze_table(sql_file: str, target_table: str):
     sql = read_sql(SQL_DIR / sql_file)
 
@@ -104,6 +110,7 @@ with DAG(
     start_date=datetime(2026, 1, 1),
     schedule=None,
     catchup=False,
+    max_active_tasks=4,
     default_args=default_args,
     tags=["ABC", "full load bronze"],
 ) as dag:
@@ -112,8 +119,10 @@ with DAG(
         task_id="start"
     )
 
+    # Emits bronze_full_load_dataset upon completion to trigger Silver
     end = EmptyOperator(
-        task_id="end"
+        task_id="end",
+        outlets=[bronze_full_load_dataset],
     )
 
     # Dynamically generate a PythonOperator for each full-load table

@@ -135,6 +135,7 @@ with DAG(
     start_date=datetime(2026, 1, 1),
     schedule="@hourly",
     catchup=False,
+    max_active_tasks=4, 
     default_args=default_args,
     tags=["ABC", "incremental bronze"],
 ) as dag:
