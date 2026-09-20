@@ -1,0 +1,43 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Apache Airflow runtime files
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+standalone_admin_password.txt
+logs/
+airflow-scheduler.err
+airflow-scheduler.log
+airflow-scheduler.out
+airflow-scheduler.pid
+airflow-webserver.err
+airflow-webserver.log
+airflow-webserver.out
+
+# SQLite and Local Data Storage
+*.sqlite3
+*.db
+*.db-journal
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# OS and IDE files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
