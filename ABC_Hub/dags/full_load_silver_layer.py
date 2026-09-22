@@ -29,7 +29,7 @@ SQL_DIR = BASE_DIR / "sql"
 
 # Listen to the Dataset produced by full_load_bronze_layer
 bronze_full_load_dataset = Dataset("postgres_dw://bronze/full_load")
-
+silver_full_load_dataset = Dataset("postgres_dw://silver/full_load")
 SILVER_TABLES = [
     # Lookup / Reference Tables
     "country", "city", "content_type", "genre", "artist",
@@ -94,7 +94,7 @@ with DAG(
 ) as dag:
 
     start = EmptyOperator(task_id="start")
-    end = EmptyOperator(task_id="end")
+    end = EmptyOperator(task_id="end",outlets=[silver_full_load_dataset])
 
     silver_tasks = []
 
