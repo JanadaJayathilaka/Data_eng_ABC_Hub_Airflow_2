@@ -43,43 +43,51 @@ GOLD_FACTS = [
 # --------------------------------------------------------------------
 # Watermark Helper
 # --------------------------------------------------------------------
-def get_gold_watermark(target_table: str, is_fact: bool = False):
+# Watermark Helper
+# --------------------------------------------------------------------
+def get_gold_watermark(target_table: str):
     """
-    Retrieves the last watermark timestamp.
-    For dimensions: uses GREATEST(MAX(created_at), MAX(updated_at)).
-    For facts: uses a dedicated gold.watermark_tracker table.
+    Retrieves the last watermark timestamp using gold.watermark_tracker.
+    If no entry exists yet, checks for existing updated_at or defaults to 1900-01-01.
     """
     hook = PostgresHook(postgres_conn_id=TARGET_CONN)
     conn = hook.get_conn()
     cursor = conn.cursor()
 
-    if is_fact:
-        # Create control table if it doesn't exist
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS gold.watermark_tracker (
-                table_name VARCHAR(100) PRIMARY KEY,
-                last_watermark TIMESTAMP NOT NULL DEFAULT '1900-01-01 00:00:00'
-            );
-        """)
-        conn.commit()
+    # Create control table if it doesn't exist
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS gold.watermark_tracker (
+            table_name VARCHAR(100) PRIMARY KEY,
+            last_watermark TIMESTAMP NOT NULL DEFAULT '1900-01-01 00:00:00'
+        );
+    """)
+    conn.commit()
 
-        cursor.execute(
-            "SELECT last_watermark FROM gold.watermark_tracker WHERE table_name = %s;",
-            (target_table,),
-        )
-        row = cursor.fetchone()
-        last_watermark = row[0] if row else "1900-01-01 00:00:00"
+    cursor.execute(
+        "SELECT last_watermark FROM gold.watermark_tracker WHERE table_name = %s;",
+        (target_table,),
+    )
+    row = cursor.fetchone()
+
+    if not row or not row[0]:
+        # Check if table schema contains updated_at column safely
+        cursor.execute(f"""
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_schema = split_part('{target_table}', '.', 1)
+              AND table_name = split_part('{target_table}', '.', 2)
+              AND column_name = 'updated_at';
+        """)
+        has_updated_at = cursor.fetchone()
+
+        if has_updated_at:
+            cursor.execute(f"SELECT COALESCE(MAX(updated_at), '1900-01-01 00:00:00'::timestamp) FROM {target_table};")
+            init_row = cursor.fetchone()
+            last_watermark = init_row[0] if init_row and init_row[0] else "1900-01-01 00:00:00"
+        else:
+            last_watermark = "1900-01-01 00:00:00"
     else:
-        sql = f"""
-            SELECT COALESCE(
-                GREATEST(MAX(created_at), MAX(updated_at)),
-                '1900-01-01 00:00:00'::timestamp
-            ) AS last_watermark
-            FROM {target_table};
-        """
-        cursor.execute(sql)
-        row = cursor.fetchone()
-        last_watermark = row[0] if row and row[0] else "1900-01-01 00:00:00"
+        last_watermark = row[0]
 
     cursor.close()
     conn.close()
@@ -88,8 +96,8 @@ def get_gold_watermark(target_table: str, is_fact: bool = False):
     return str(last_watermark)
 
 
-def update_fact_watermark(target_table: str, new_watermark: str):
-    """Updates the watermark tracker for fact tables upon successful execution."""
+def update_gold_watermark(target_table: str, new_watermark: str):
+    """Updates the watermark tracker for gold tables upon successful execution."""
     hook = PostgresHook(postgres_conn_id=TARGET_CONN)
     conn = hook.get_conn()
     cursor = conn.cursor()
@@ -107,8 +115,8 @@ def update_fact_watermark(target_table: str, new_watermark: str):
 # --------------------------------------------------------------------
 # Generic Loader for Gold Tables
 # --------------------------------------------------------------------
-def load_gold_incremental(sql_file: str, target_table: str, is_fact: bool = False):
-    last_watermark = get_gold_watermark(target_table, is_fact=is_fact)
+def load_gold_incremental(sql_file: str, target_table: str):
+    last_watermark = get_gold_watermark(target_table)
     current_run_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Read SQL template and substitute watermark
@@ -119,9 +127,8 @@ def load_gold_incremental(sql_file: str, target_table: str, is_fact: bool = Fals
     hook = PostgresHook(postgres_conn_id=TARGET_CONN)
     hook.run(sql)
 
-    # If fact table, advance watermark
-    if is_fact:
-        update_fact_watermark(target_table, current_run_time)
+    # Advance watermark in the control table
+    update_gold_watermark(target_table, current_run_time)
 
     print(f"Successfully loaded incremental data into {target_table} (from watermark: {last_watermark})")
 
@@ -168,7 +175,6 @@ with DAG(
             op_kwargs={
                 "sql_file": f"{dim}.sql",
                 "target_table": f"gold.{dim}",
-                "is_fact": False,
             },
         )
         dim_tasks[dim] = task
@@ -187,7 +193,6 @@ with DAG(
             op_kwargs={
                 "sql_file": f"{fact}.sql",
                 "target_table": f"gold.{fact}",
-                "is_fact": True,
             },
         )
         fact_tasks.append(task)
