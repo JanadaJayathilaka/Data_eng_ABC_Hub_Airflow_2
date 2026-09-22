@@ -142,7 +142,7 @@ with DAG(
     catchup=False,
     max_active_tasks=4,
     default_args=default_args,
-    tags=["gold", "incremental", "medallion", "star_schema"],
+    tags=["gold", "incremental", "medallion", "star_schema", "ABC"],
 ) as dag:
 
     start = EmptyOperator(task_id="start")

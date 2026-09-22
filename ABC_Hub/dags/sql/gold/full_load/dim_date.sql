@@ -1,4 +1,4 @@
-TRUNCATE TABLE gold.dim_date;
+TRUNCATE TABLE gold.dim_date CASCADE;
 
 INSERT INTO gold.dim_date (
     date_key,

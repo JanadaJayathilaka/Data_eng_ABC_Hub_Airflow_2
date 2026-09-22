@@ -37,7 +37,7 @@ with DAG(
     catchup=False,
     max_active_tasks=4,
     template_searchpath=[SQL_BASE_PATH],  # Allows direct filename references without slash issues
-    tags=["gold", "full_load", "star_schema"],
+    tags=["gold", "full_load", "star_schema", "ABC"],
 ) as dag:
 
     start = EmptyOperator(task_id="start")
