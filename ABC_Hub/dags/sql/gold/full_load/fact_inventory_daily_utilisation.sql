@@ -1,65 +1,35 @@
-TRUNCATE TABLE gold.fact_inventory_daily_utilisation RESTART IDENTITY CASCADE;
+TRUNCATE TABLE gold.fact_inventory_daily_utilisation RESTART IDENTITY;
 
-WITH
--- 1. Active Date Range
-date_range AS (
-    SELECT
-        COALESCE(MIN(rental_date), '2024-01-01'::DATE) AS min_date,
-        COALESCE(MAX(GREATEST(rental_date, return_date, due_date)), CURRENT_DATE) AS max_date
-    FROM silver.rental
-),
-
--- 2. Daily Calendar
-calendar_days AS (
-    SELECT full_date, date_key
-    FROM gold.dim_date, date_range
-    WHERE full_date BETWEEN min_date AND max_date
-),
-
--- 3. Daily Rental Activity
-daily_rentals AS (
+-- 1. Daily rental events per inventory item
+WITH rental_events AS (
     SELECT
         inventory_id,
-        rental_date AS event_date,
-        COUNT(rental_id) AS rental_count
+        rental_date::DATE AS activity_date,
+        COUNT(*) AS rental_count
     FROM silver.rental
-    WHERE inventory_id IS NOT NULL AND rental_date IS NOT NULL
-    GROUP BY inventory_id, rental_date
+    WHERE rental_date IS NOT NULL AND inventory_id IS NOT NULL
+    GROUP BY inventory_id, rental_date::DATE
 ),
 
--- 4. Daily Return Activity
-daily_returns AS (
+-- 2. Daily return events per inventory item
+return_events AS (
     SELECT
         inventory_id,
-        return_date AS event_date,
-        COUNT(rental_id) AS return_count
+        return_date::DATE AS activity_date,
+        COUNT(*) AS return_count
     FROM silver.rental
-    WHERE inventory_id IS NOT NULL AND return_date IS NOT NULL
-    GROUP BY inventory_id, return_date
+    WHERE return_date IS NOT NULL AND inventory_id IS NOT NULL
+    GROUP BY inventory_id, return_date::DATE
 ),
 
--- 5. Daily Rented State
-active_rental_days AS (
-    SELECT DISTINCT
-        r.inventory_id,
-        cd.full_date,
-        cd.date_key
-    FROM silver.rental r
-    JOIN calendar_days cd
-      ON cd.full_date >= r.rental_date
-     AND cd.full_date <= COALESCE(r.return_date, r.due_date, r.rental_date)
-),
-
--- 6. Combine all inventory activity days
-inventory_days AS (
-    SELECT inventory_id, full_date, date_key, TRUE AS is_rented
-    FROM active_rental_days
+-- 3. Combine distinct inventory dates
+distinct_inventory_dates AS (
+    SELECT inventory_id, activity_date FROM rental_events
     UNION
-    SELECT dr.inventory_id, cd.full_date, cd.date_key, FALSE AS is_rented
-    FROM daily_returns dr
-    JOIN calendar_days cd ON dr.event_date = cd.full_date
+    SELECT inventory_id, activity_date FROM return_events
 )
 
+-- 4. Insert into gold fact table
 INSERT INTO gold.fact_inventory_daily_utilisation (
     inventory_key,
     warehouse_key,
@@ -71,23 +41,39 @@ INSERT INTO gold.fact_inventory_daily_utilisation (
 )
 SELECT
     di.inventory_key,
-    dw.warehouse_key,
-    id.date_key,
-
-    COALESCE(rent.rental_count, 0) AS rental_count,
+    di.warehouse_key,
+    dd.date_key,
+    COALESCE(re.rental_count, 0) AS rental_count,
     COALESCE(ret.return_count, 0) AS return_count,
-    CASE WHEN id.is_rented THEN 0 ELSE 1 END AS days_available,
-    CASE WHEN id.is_rented THEN 100.00 ELSE 0.00 END AS inventory_utilisation_percentage
-
-FROM inventory_days id
-JOIN silver.inventory_item ii
-  ON id.inventory_id = ii.inventory_id
-JOIN gold.dim_inventory di
-  ON ii.inventory_id = di.inventory_id
- AND id.full_date BETWEEN di.effective_from AND di.effective_to
+    -- If rented on this day, available days = 0, otherwise 1
+    CASE
+        WHEN COALESCE(re.rental_count, 0) > 0 THEN 0
+        ELSE 1
+    END AS days_available,
+    -- 100% utilisation if rented on that day, else 0%
+    CASE
+        WHEN COALESCE(re.rental_count, 0) > 0 THEN 100.00
+        ELSE 0.00
+    END AS inventory_utilisation_percentage
+FROM distinct_inventory_dates did
+-- Inventory dimension lookup
+JOIN LATERAL (
+    SELECT inventory_key, warehouse_key
+    FROM gold.dim_inventory inv
+    WHERE inv.inventory_id = did.inventory_id
+    ORDER BY
+        CASE WHEN did.activity_date BETWEEN inv.effective_from AND inv.effective_to THEN 0 ELSE 1 END,
+        inv.is_current DESC,
+        inv.inventory_key DESC
+    LIMIT 1
+) di ON TRUE
+-- Warehouse dimension lookup (ensures FK validity)
 JOIN gold.dim_warehouse dw
-  ON ii.warehouse_id = dw.warehouse_id
-LEFT JOIN daily_rentals rent
-  ON id.inventory_id = rent.inventory_id AND id.full_date = rent.event_date
-LEFT JOIN daily_returns ret
-  ON id.inventory_id = ret.inventory_id AND id.full_date = ret.event_date;
+    ON di.warehouse_key = dw.warehouse_key
+-- Date dimension lookup
+JOIN gold.dim_date dd
+    ON did.activity_date = dd.full_date
+LEFT JOIN rental_events re
+    ON did.inventory_id = re.inventory_id AND did.activity_date = re.activity_date
+LEFT JOIN return_events ret
+    ON did.inventory_id = ret.inventory_id AND did.activity_date = ret.activity_date;
