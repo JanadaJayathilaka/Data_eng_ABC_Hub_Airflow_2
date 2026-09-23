@@ -43,8 +43,6 @@ GOLD_FACTS = [
 # --------------------------------------------------------------------
 # Watermark Helper
 # --------------------------------------------------------------------
-# Watermark Helper
-# --------------------------------------------------------------------
 def get_gold_watermark(target_table: str):
     """
     Retrieves the last watermark timestamp using gold.watermark_tracker.
